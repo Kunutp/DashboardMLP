@@ -309,6 +309,106 @@ def main():
             else:
                 st.info("ไม่มีข้อมูลการใช้สารเคมีในช่วงเวลาที่เลือก")
 
+        # Recycle Water Analysis
+        if not water_quality_df.empty:
+            st.subheader("การวิเคราะห์ตัวอย่างจากระบบกำจัดตะกอน")
+
+            recycle_stats = processor.get_recycle_water_stats()
+
+            if recycle_stats:
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if 'Turbidity' in recycle_stats:
+                        st.markdown("**ความขุ่นน้ำนำกลับ**")
+                        turb_count = recycle_stats['Turbidity']['count']
+                        st.metric("จำนวนตัวอย่าง", f"{turb_count} ครั้ง")
+
+                with col2:
+                    if 'Conductivity' in recycle_stats:
+                        st.markdown("**ความนำไฟฟ้าน้ำนำกลับ**")
+                        cond_count = recycle_stats['Conductivity']['count']
+                        st.metric("จำนวนตัวอย่าง", f"{cond_count} ครั้ง")
+            else:
+                st.info("ไม่มีข้อมูลน้ำนำกลับในช่วงเวลาที่เลือก")
+
+        # Performance Evaluation Table
+        if not water_quality_df.empty:
+            st.subheader("สรุปเกณฑ์ประเมินผลงาน")
+
+            # Calculate all required metrics
+            turb_tw_nc, turb_tw_total = processor.count_nc_samples(
+                'TW', 'Turbidity', lambda x: x > turbidity_threshold
+            )
+            ph_nc, ph_total = processor.count_nc_samples(
+                'TW', 'pH', lambda x: x < ph_min or x > ph_max
+            )
+            cl2_nc, cl2_total = processor.count_nc_samples(
+                'TW', 'Free Residual Cl2', lambda x: x < cl2_threshold
+            )
+
+            # Get statistics with count
+            fw_stats_with_count = processor.get_statistics_with_count('FW', 'Turbidity', apply_filter=False)
+            tw_stats_with_count = processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=False)
+            fw_stats_filtered_with_count = processor.get_statistics_with_count('FW', 'Turbidity', apply_filter=True)
+            tw_stats_filtered_with_count = processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=True)
+
+            # Build performance table data
+            perf_data = {
+                'เกณฑ์วัดการดำเนินงาน': [
+                    'จำนวนตัวอย่างได้มาตรฐาน ด้านกายภาพ (ความขุ่น)',
+                    'จำนวนตัวอย่างค่าความเป็นกรด-ด่าง (pH)',
+                    'จำนวนตัวอย่างได้มาตรฐาน ด้านเคมี (คลอรีน)',
+                    'ค่าความขุ่นน้ำหลังกรองเฉลี่ย',
+                    'ค่าความขุ่นน้ำหลังกรอง (95percentile)',
+                    'ค่าความขุ่นน้ำประปาเฉลี่ย',
+                    'ค่าความขุ่นน้ำประปา (95percentile)',
+                    'ค่าความขุ่นน้ำประปา (100percentile)',
+                    'ค่าความขุ่นน้ำหลังกรองเฉลี่ย@ที่ RW<100',
+                    'ค่าความขุ่นน้ำหลังกรอง (95percentile)@ที่ RW<100',
+                    'ค่าความขุ่นน้ำหลังกรอง (100percentile)@ที่ RW<100',
+                    'ค่าความขุ่นน้ำประปาเฉลี่ย@ที่ RW<100',
+                    'ค่าความขุ่นน้ำประปา (95percentile)@ที่ RW<100',
+                    'ค่าความขุ่นน้ำประปา (100percentile)@ที่ RW<100'
+                ],
+                'หน่วยวัด': [
+                    'ร้อยละ', 'ร้อยละ', 'ร้อยละ',
+                    'NTU', 'NTU', 'NTU', 'NTU', 'NTU',
+                    'NTU', 'NTU', 'NTU',
+                    'NTU', 'NTU', 'NTU'
+                ],
+                'จำนวน NC': [
+                    turb_tw_nc, ph_nc, cl2_nc,
+                    '', '', '', '', '', '', '', '', '', '', ''
+                ],
+                'จำนวนตัวอย่าง': [
+                    turb_tw_total, ph_total, cl2_total,
+                    fw_stats_with_count['total_count'], fw_stats_with_count['total_count'],
+                    tw_stats_with_count['total_count'], tw_stats_with_count['total_count'], tw_stats_with_count['total_count'],
+                    fw_stats_filtered_with_count['total_count'], fw_stats_filtered_with_count['total_count'], fw_stats_filtered_with_count['total_count'],
+                    tw_stats_filtered_with_count['total_count'], tw_stats_filtered_with_count['total_count'], tw_stats_filtered_with_count['total_count']
+                ],
+                'ผลงาน': [
+                    f"{((turb_tw_total - turb_tw_nc) / turb_tw_total * 100):.1f}%" if turb_tw_total > 0 else "N/A",
+                    f"{((ph_total - ph_nc) / ph_total * 100):.1f}%" if ph_total > 0 else "N/A",
+                    f"{((cl2_total - cl2_nc) / cl2_total * 100):.1f}%" if cl2_total > 0 else "N/A",
+                    f"{fw_stats_with_count['mean']:.2f}" if not np.isnan(fw_stats_with_count['mean']) else "N/A",
+                    f"{fw_stats_with_count['p95']:.2f}" if not np.isnan(fw_stats_with_count['p95']) else "N/A",
+                    f"{tw_stats_with_count['mean']:.2f}" if not np.isnan(tw_stats_with_count['mean']) else "N/A",
+                    f"{tw_stats_with_count['p95']:.2f}" if not np.isnan(tw_stats_with_count['p95']) else "N/A",
+                    f"{tw_stats_with_count['p100']:.2f}" if not np.isnan(tw_stats_with_count['p100']) else "N/A",
+                    f"{fw_stats_filtered_with_count['mean']:.2f}" if not np.isnan(fw_stats_filtered_with_count['mean']) else "N/A",
+                    f"{fw_stats_filtered_with_count['p95']:.2f}" if not np.isnan(fw_stats_filtered_with_count['p95']) else "N/A",
+                    f"{fw_stats_filtered_with_count['p100']:.2f}" if not np.isnan(fw_stats_filtered_with_count['p100']) else "N/A",
+                    f"{tw_stats_filtered_with_count['mean']:.2f}" if not np.isnan(tw_stats_filtered_with_count['mean']) else "N/A",
+                    f"{tw_stats_filtered_with_count['p95']:.2f}" if not np.isnan(tw_stats_filtered_with_count['p95']) else "N/A",
+                    f"{tw_stats_filtered_with_count['p100']:.2f}" if not np.isnan(tw_stats_filtered_with_count['p100']) else "N/A"
+                ]
+            }
+
+            perf_df = pd.DataFrame(perf_data)
+            st.dataframe(perf_df, use_container_width=True, hide_index=True)
+
 
 if __name__ == "__main__":
     main()

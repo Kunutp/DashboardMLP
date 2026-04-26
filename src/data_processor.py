@@ -231,6 +231,70 @@ class WaterQualityProcessor:
 
         return int(nc_count), int(total_count)
 
+    def get_recycle_water_stats(self) -> Dict[str, Dict[str, float]]:
+        """
+        Get recycle water statistics from water quality data
+        - Turbidity (NTU)
+        - Conductivity (µS/cm)
+
+        Returns:
+            Dictionary with count for each parameter
+        """
+        if self.df.empty:
+            return {}
+
+        result = {}
+
+        # Filter data for recycle water parameters
+        # Only count where sampling_point is 'recycle water'
+        for param_name in ['Turbidity', 'Conductivity']:
+            param_data = self.df[
+                (self.df['parameter'] == param_name) &
+                (self.df['sampling_point'] == 'recycle water') &
+                (self.df['value'].notna())
+            ]
+
+            if not param_data.empty:
+                result[param_name] = {
+                    'count': len(param_data)
+                }
+
+        return result
+
+    def get_statistics_with_count(self, sampling_points, parameter, apply_filter: bool = False) -> Dict[str, any]:
+        """
+        Calculate statistics with total sample count
+
+        Args:
+            sampling_points: List of sampling points (or group name like 'TW', 'FW')
+            parameter: Parameter name
+            apply_filter: Whether to apply @RW<100 filtering
+
+        Returns:
+            Dictionary with mean, p95, p100, and total_count
+        """
+        # If sampling_points is a string (group name), get appropriate points for parameter
+        if isinstance(sampling_points, str):
+            sampling_points = self.get_sampling_points_for_parameter(parameter, sampling_points)
+
+        df_to_use = self.apply_rw_filtering() if apply_filter else self.df
+
+        filtered = df_to_use[
+            (df_to_use['sampling_point'].isin(sampling_points)) &
+            (df_to_use['parameter'] == parameter) &
+            (df_to_use['value'].notna())
+        ]
+
+        if filtered.empty:
+            return {'mean': np.nan, 'p95': np.nan, 'p100': np.nan, 'total_count': 0}
+
+        return {
+            'mean': filtered['value'].mean(),
+            'p95': filtered['value'].quantile(0.95),
+            'p100': filtered['value'].max(),
+            'total_count': len(filtered)
+        }
+
 
 class JarTestProcessor:
     """Process Jar Test data"""
