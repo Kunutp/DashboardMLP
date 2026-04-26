@@ -263,11 +263,21 @@ class JarTestProcessor:
             self.df['time_period'].isin(['08.00-16.00', '16.00-24.00'])
         ].copy()
 
+        # Remove rows where chemical is NaN or dose is NaN (no actual test data)
+        df_shifts = df_shifts[
+            (df_shifts['chemical'].notna()) &
+            (df_shifts['dose'].notna())
+        ].copy()
+
         if df_shifts.empty:
             return pd.Series()
 
         # Count unique date + time_period + chemical combinations
-        chemical_counts = df_shifts.groupby(['chemical'])['date'].count()
+        # Each shift with any jar test for a chemical = 1 count
+        # First, get unique combinations of date + time_period + chemical
+        unique_combinations = df_shifts[['date', 'time_period', 'chemical']].drop_duplicates()
+        # Then count occurrences per chemical
+        chemical_counts = unique_combinations.groupby(['chemical']).size()
 
         return chemical_counts
 

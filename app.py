@@ -137,75 +137,6 @@ def main():
         water_quality_df = get_data_by_month(conn, selected_year, selected_month)
         jar_test_df = get_jar_test_by_month(conn, selected_year, selected_month)
 
-    # Display Database Summary
-    with st.expander("📋 สรุปข้อมูลฐานข้อมูล", expanded=False):
-        summary = get_database_summary(conn)
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("ระเบียน Water Quality", f"{summary.get('water_quality_count', 0):,}")
-        with col2:
-            st.metric("ระเบียน Jar Test", f"{summary.get('jar_test_count', 0):,}")
-        with col3:
-            date_range = summary.get('date_range', (None, None))
-            if date_range[0] and date_range[1]:
-                st.metric("ช่วงวันที่", f"{date_range[0]} ถึง {date_range[1]}")
-
-        st.markdown("**Parameters ทั้งหมด:**")
-        st.write(", ".join(summary.get('parameters', [])))
-
-        st.markdown("**Sampling Points ทั้งหมด:**")
-        all_points = summary.get('sampling_points', [])
-        st.write(", ".join(all_points))
-
-        # Check for CW, FW, TW specifically
-        st.markdown("---")
-        st.markdown("**ตรวจสอบ Sampling Points พิเศษ:**")
-        special_points = ['CW', 'FW', 'TW', 'RW']
-        for point in special_points:
-            if point in all_points:
-                st.success(f"✅ มี {point} ใน Database")
-            else:
-                st.error(f"❌ ไม่พบ {point} ใน Database")
-
-    # Display Data Preview
-    if not water_quality_df.empty:
-        st.subheader("🔍 ตัวอย่างข้อมูล Water Quality")
-
-        st.write(f"**จำนวนระเบียน:** {len(water_quality_df):,}")
-        st.dataframe(
-            water_quality_df.head(20),
-            use_container_width=True,
-            height=300
-        )
-
-        # Show statistics
-        with st.expander("📈 สถิติข้อมูลเบื้องต้น"):
-            st.write("**จำนวนระเบียนต่อ Parameter:**")
-            param_counts = water_quality_df['parameter'].value_counts().reset_index()
-            param_counts.columns = ['Parameter', 'Count']
-            st.dataframe(param_counts, use_container_width=True)
-
-            st.write("**จำนวนระเบียนต่อ Sampling Point:**")
-            point_counts = water_quality_df['sampling_point'].value_counts().reset_index()
-            point_counts.columns = ['Sampling Point', 'Count']
-            st.dataframe(point_counts, use_container_width=True)
-
-    else:
-        st.warning(f"⚠️ ไม่พบข้อมูลสำหรับเดือน {month_names[selected_month]} {selected_year}")
-
-    # Display Jar Test Data
-    if not jar_test_df.empty:
-        st.subheader("🧪 ตัวอย่างข้อมูล Jar Test")
-        st.write(f"**จำนวนระเบียน:** {len(jar_test_df):,}")
-        st.dataframe(
-            jar_test_df.head(20),
-            use_container_width=True,
-            height=300
-        )
-    else:
-        st.info("ℹ️ ไม่มีข้อมูล Jar Test ในช่วงเวลาที่เลือก")
-
     # ============================================
     # PHASE 2: DATA PROCESSING & ANALYSIS
     # ============================================
@@ -246,80 +177,28 @@ def main():
         }
 
         if not sample_counts.empty:
-            # Filter out % Sludge from the table
-            sample_counts = sample_counts[~sample_counts.index.isin(['% Sludge'])]
+            # Define the order of parameters to display (only these 10)
+            param_order = [
+                'Turbidity',
+                'Alkalinity',
+                'pH',
+                'Free Residual Cl2',
+                'Conductivity',
+                'O2 Consume',
+                'DO',
+                'SS',
+                'Color',
+                'NH3-N'
+            ]
+
+            # Filter and reorder according to the specified order
+            sample_counts = sample_counts[sample_counts.index.isin(param_order)]
+            # Reindex to maintain the specified order (only keep existing parameters)
+            sample_counts = sample_counts.reindex([p for p in param_order if p in sample_counts.index])
 
             sample_counts.index = sample_counts.index.map(lambda x: param_thai.get(x, x))
             sample_counts.columns = ['น้ำดิบ', 'น้ำตกตะกอน', 'น้ำกรอง', 'น้ำประปา']
             st.dataframe(sample_counts, use_container_width=True)
-
-            # Debug info: Show which parameters have zero data in TW group
-            with st.expander("🔍 ข้อมูลเพิ่มเติม - Parameters ที่ไม่มีข้อมูลน้ำประปา"):
-                zero_tw_params = sample_counts[sample_counts['น้ำประปา'] == 0]
-                if not zero_tw_params.empty:
-                    st.write("**Parameters ที่ไม่มีข้อมูลที่จุดวัดน้ำประปา:**")
-                    for param in zero_tw_params.index:
-                        st.write(f"- {param}")
-
-                    st.info("💡 หมายเหตุ: Parameters เหล่านี้อาจจะไม่ได้วัดที่จุดวัดน้ำประปา "  \
-                           "หรือวัดเฉพาะช่วงเวลาที่ไม่ได้อยู่ในเดือนที่เลือก")
-                else:
-                    st.success("✅ ทุก Parameter มีข้อมูลที่จุดวัดน้ำประปาครบถ้วน")
-
-            # Debug info: Show O2 Consume details
-            with st.expander("🔍 ข้อมูลเพิ่มเติม - O2 Consume Sampling Points"):
-                o2_data = water_quality_df[water_quality_df['parameter'] == 'O2 Consume']
-
-                if not o2_data.empty:
-                    st.write("**O2 Consume พบที่ Sampling Points ทั้งหมด (จริงใน Database):**")
-                    o2_points = sorted(o2_data['sampling_point'].unique())
-                    for point in o2_points:
-                        count = len(o2_data[o2_data['sampling_point'] == point])
-                        st.write(f"- **{point}**: {count} ระเบียน")
-
-                    # Query specific date to see detailed records
-                    st.write("---")
-                    st.subheader("🔍 ตรวจสอบข้อมูลวันที่ 7 เม.ย. 2026")
-
-                    query = """
-                        SELECT date, time_period, time_label, sampling_point, value
-                        FROM water_quality_data
-                        WHERE parameter = 'O2 Consume'
-                          AND date = '2026-04-07'
-                        ORDER BY time_period, sampling_point
-                    """
-
-                    try:
-                        o2_april7 = pd.read_sql_query(query, conn)
-                        if not o2_april7.empty:
-                            st.write("**O2 Consume วันที่ 7 เม.ย. 2026:**")
-                            st.dataframe(o2_april7, use_container_width=True, hide_index=True)
-
-                            # Summary by time period
-                            st.write("**สรุปจำนวนครั้งตามช่วงเวลา:**")
-                            time_summary = o2_april7.groupby(['time_period', 'time_label']).size().reset_index()
-                            time_summary.columns = ['ช่วงเวลา', 'Label', 'จำนวนครั้ง']
-                            st.dataframe(time_summary, use_container_width=True, hide_index=True)
-
-                            # Summary by sampling point
-                            st.write("**สรุปจำนวนครั้งตาม Sampling Point:**")
-                            point_summary = o2_april7.groupby('sampling_point').size().reset_index()
-                            point_summary.columns = ['Sampling Point', 'จำนวนครั้ง']
-                            st.dataframe(point_summary, use_container_width=True, hide_index=True)
-
-                            # Total records
-                            st.metric("รวมทั้งหมด", f"{len(o2_april7)} ระเบียน")
-                        else:
-                            st.warning("ไม่พบข้อมูล O2 Consume วันที่ 7 เม.ย. 2026")
-                    except Exception as e:
-                        st.error(f"เกิดข้อผิดพลาดในการ query: {e}")
-
-                    st.info("💡 จากข้อมูลนี้จะเห็นว่าใน 1 วันมีการวัดที่ช่วงเวลาไหนบ้าง และ sampling point ไหนบ้าง")
-
-                else:
-                    st.warning("⚠️ ไม่พบข้อมูล O2 Consume ในเดือนที่เลือก")
-        else:
-            st.warning("ไม่พบข้อมูลสำหรับสรุปจำนวนตัวอย่าง")
 
         # Statistics for Turbidity
         st.subheader("สถิติความขุ่น (Turbidity)")
@@ -429,12 +308,6 @@ def main():
                     st.write(f"- **{chemical}**: {count} ครั้ง")
             else:
                 st.info("ไม่มีข้อมูลการใช้สารเคมีในช่วงเวลาที่เลือก")
-
-    # ============================================
-    # PHASE 2 COMPLETE
-    # ============================================
-    st.markdown("---")
-    st.success("✅ **Phase 2 สำเร็จ!** ระบบคำนวณ Business Logic และแสดงผลลัพธ์ครบถ้วนแล้ว")
 
 
 if __name__ == "__main__":
