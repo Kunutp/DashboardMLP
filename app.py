@@ -17,6 +17,60 @@ from src.database import (
 from src.data_processor import WaterQualityProcessor, JarTestProcessor
 
 
+@st.dialog("📊 กราฟจำนวนครั้งตรวจวัดรายวัน")
+def show_daily_count_chart(
+    processor: WaterQualityProcessor,
+    parameter: str,
+    group: str,
+    year: int,
+    month: int,
+    param_thai_name: str,
+    group_thai_name: str
+):
+    """
+    Show daily count chart in modal dialog
+
+    Args:
+        processor: WaterQualityProcessor instance
+        parameter: Internal parameter name (e.g., 'Turbidity')
+        group: Internal group name (e.g., 'TW')
+        year: Selected year
+        month: Selected month
+        param_thai_name: Thai parameter name for display
+        group_thai_name: Thai group name for display
+    """
+    st.markdown(f"### {param_thai_name} - {group_thai_name}")
+
+    # Get daily counts
+    daily_counts = processor.get_daily_counts_for_parameter_group(
+        parameter, group, year, month
+    )
+
+    if daily_counts.empty:
+        st.warning("ไม่มีข้อมูลในช่วงเวลาที่เลือก")
+        return
+
+    # Summary metrics
+    total_count = daily_counts['count'].sum()
+    avg_count = daily_counts['count'].mean()
+    max_day = daily_counts.loc[daily_counts['count'].idxmax(), 'day']
+    max_count = daily_counts['count'].max()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("จำนวนครั้งทั้งหมด", f"{total_count} ครั้ง")
+    with col2:
+        st.metric("เฉลี่ยต่อวัน", f"{avg_count:.1f} ครั้ง")
+    with col3:
+        st.metric("วันที่มีการตรวจวัดมากที่สุด", f"วันที่ {max_day}")
+
+    st.markdown("---")
+
+    # Bar chart
+    chart_data = daily_counts.set_index('day')['count']
+    st.bar_chart(chart_data)
+
+
 def main():
     # Page Configuration
     st.set_page_config(
@@ -196,9 +250,94 @@ def main():
             # Reindex to maintain the specified order (only keep existing parameters)
             sample_counts = sample_counts.reindex([p for p in param_order if p in sample_counts.index])
 
-            sample_counts.index = sample_counts.index.map(lambda x: param_thai.get(x, x))
-            sample_counts.columns = ['น้ำดิบ', 'น้ำตกตะกอน', 'น้ำกรอง', 'น้ำประปา']
-            st.dataframe(sample_counts, use_container_width=True)
+            # Convert to long format for interactive table
+            sample_counts_reset = sample_counts.reset_index()
+            sample_counts_reset.columns = ['พารามิเตอร์'] + list(sample_counts_reset.columns[1:])
+
+            # Map parameter names to Thai
+            sample_counts_reset['พารามิเตอร์'] = sample_counts_reset['พารามิเตอร์'].map(param_thai)
+
+            # Rename columns to Thai before melting
+            column_thai_map = {
+                'RW': 'น้ำดิบ',
+                'CW': 'น้ำตกตะกอน',
+                'FW': 'น้ำกรอง',
+                'TW': 'น้ำประปา'
+            }
+            sample_counts_reset.columns = ['พารามิเตอร์'] + [column_thai_map.get(col, col) for col in sample_counts.columns]
+
+            # Melt to long format
+            long_format = sample_counts_reset.melt(
+                id_vars=['พารามิเตอร์'],
+                var_name='กลุ่ม',
+                value_name='จำนวน'
+            )
+
+            # Map Thai group names back to English for internal use
+            group_reverse_map = {
+                'น้ำดิบ': 'RW',
+                'น้ำตกตะกอน': 'CW',
+                'น้ำกรอง': 'FW',
+                'น้ำประปา': 'TW'
+            }
+
+            # Create internal parameter name column (hidden)
+            reverse_param_thai = {v: k for k, v in param_thai.items()}
+            long_format['param_internal'] = long_format['พารามิเตอร์'].map(reverse_param_thai)
+            long_format['group_internal'] = long_format['กลุ่ม'].map(group_reverse_map)
+
+            # Create pivot view for display (keep original format for reference)
+            sample_counts_copy = sample_counts.copy()
+            sample_counts_copy.index = sample_counts_copy.index.map(lambda x: param_thai.get(x, x))
+            sample_counts_copy.columns = ['น้ำดิบ', 'น้ำตกตะกอน', 'น้ำกรอง', 'น้ำประปา']
+
+            # Create tabs
+            tab1, tab2 = st.tabs(["📊 ตารางสรุป (Pivot)", "📈 ดูกราฟรายวัน"])
+
+            with tab1:
+                st.dataframe(sample_counts_copy, use_container_width=True)
+
+            with tab2:
+                st.markdown("👆 **คลิกที่แถวในตารางด้านล่าง** เพื่อดูกราฟจำนวนครั้งตรวจวัดรายวัน")
+
+                # Display interactive table with row selection
+                selection = st.dataframe(
+                    long_format[['พารามิเตอร์', 'กลุ่ม', 'จำนวน']],
+                    on_select="rerun",
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # Handle selection
+                if selection.selection['rows']:
+                    # Get first selected row
+                    selected_idx = selection.selection['rows'][0]
+                    selected_row = long_format.iloc[selected_idx]
+
+                    # Store in session state
+                    st.session_state.selected_param_internal = selected_row['param_internal']
+                    st.session_state.selected_group_internal = selected_row['group_internal']
+                    st.session_state.selected_param_thai = selected_row['พารามิเตอร์']
+                    st.session_state.selected_group_thai = selected_row['กลุ่ม']
+
+        # Show dialog if selection exists
+        if all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
+                                                     'selected_param_thai', 'selected_group_thai']):
+            show_daily_count_chart(
+                processor,
+                st.session_state.selected_param_internal,
+                st.session_state.selected_group_internal,
+                selected_year,
+                selected_month,
+                st.session_state.selected_param_thai,
+                st.session_state.selected_group_thai
+            )
+
+            # Clear session state after showing dialog
+            for key in ['selected_param_internal', 'selected_group_internal',
+                       'selected_param_thai', 'selected_group_thai']:
+                if key in st.session_state:
+                    del st.session_state[key]
 
         # Jar Test Chemical Usage
         if not jar_test_df.empty:
@@ -284,7 +423,7 @@ def main():
                 ],
                 'จำนวน NC': [
                     turb_tw_nc, ph_nc, cl2_nc,
-                    '', '', '', '', '', '', '', '', '', '', ''
+                    None, None, None, None, None, None, None, None, None, None, None
                 ],
                 'จำนวนตัวอย่าง': [
                     turb_tw_total, ph_total, cl2_total,

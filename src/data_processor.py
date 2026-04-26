@@ -295,6 +295,70 @@ class WaterQualityProcessor:
             'total_count': len(filtered)
         }
 
+    def get_daily_counts_for_parameter_group(
+        self,
+        parameter: str,
+        group: str,
+        year: int,
+        month: int
+    ) -> pd.DataFrame:
+        """
+        Get daily measurement counts for specific parameter+group
+
+        Args:
+            parameter: Parameter name (e.g., 'Turbidity', 'pH')
+            group: Group name (RW, CW, FW, TW)
+            year: Year (e.g., 2025)
+            month: Month (1-12)
+
+        Returns:
+            DataFrame with columns [day, count]
+            - day: 1-31 (depending on month)
+            - count: number of measurements on that day
+        """
+        if self.df.empty:
+            return pd.DataFrame(columns=['day', 'count'])
+
+        # Get appropriate sampling points for this parameter+group
+        sampling_points = self.get_sampling_points_for_parameter(parameter, group)
+
+        # Filter by year, month, parameter, and sampling points
+        filtered = self.df[
+            (self.df['parameter'] == parameter) &
+            (self.df['sampling_point'].isin(sampling_points)) &
+            (self.df['value'].notna())
+        ].copy()
+
+        if filtered.empty:
+            # Return all days with 0 count
+            days_in_month = pd.Period(f'{year}-{month:02d}').days_in_month
+            return pd.DataFrame({
+                'day': range(1, days_in_month + 1),
+                'count': [0] * days_in_month
+            })
+
+        # Extract day from date column (assuming YYYY-MM-DD format)
+        filtered['day'] = pd.to_datetime(filtered['date']).dt.day
+
+        # Filter by selected year and month
+        filtered = filtered[
+            (pd.to_datetime(filtered['date']).dt.year == year) &
+            (pd.to_datetime(filtered['date']).dt.month == month)
+        ]
+
+        # Count measurements per day
+        daily_counts = filtered.groupby('day').size().reset_index(name='count')
+
+        # Get number of days in selected month
+        days_in_month = pd.Period(f'{year}-{month:02d}').days_in_month
+
+        # Create complete day range and merge
+        all_days = pd.DataFrame({'day': range(1, days_in_month + 1)})
+        result = all_days.merge(daily_counts, on='day', how='left').fillna(0)
+        result['count'] = result['count'].astype(int)
+
+        return result
+
 
 class JarTestProcessor:
     """Process Jar Test data"""
