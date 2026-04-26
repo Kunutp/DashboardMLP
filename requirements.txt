@@ -1,0 +1,9 @@
+# Core Framework
+streamlit>=1.28.0
+
+# Data Processing (updated for Python 3.12 compatibility)
+pandas>=2.2.0
+numpy>=1.26.0
+
+# Utilities
+python-dateutil>=2.8.2
