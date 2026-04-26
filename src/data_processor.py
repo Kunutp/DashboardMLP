@@ -307,7 +307,7 @@ class WaterQualityProcessor:
 
         Args:
             parameter: Parameter name (e.g., 'Turbidity', 'pH')
-            group: Group name (RW, CW, FW, TW)
+            group: Group name (RW, CW, FW, TW, or 'recycle_water')
             year: Year (e.g., 2025)
             month: Month (1-12)
 
@@ -319,8 +319,12 @@ class WaterQualityProcessor:
         if self.df.empty:
             return pd.DataFrame(columns=['day', 'count'])
 
-        # Get appropriate sampling points for this parameter+group
-        sampling_points = self.get_sampling_points_for_parameter(parameter, group)
+        # Special case: recycle water
+        if group == 'recycle_water':
+            sampling_points = ['recycle water']
+        else:
+            # Get appropriate sampling points for this parameter+group
+            sampling_points = self.get_sampling_points_for_parameter(parameter, group)
 
         # Filter by year, month, parameter, and sampling points
         filtered = self.df[
@@ -358,6 +362,137 @@ class WaterQualityProcessor:
         result['count'] = result['count'].astype(int)
 
         return result
+
+    def get_extreme_values(
+        self,
+        parameter: str,
+        group: str,
+        percentile_threshold: float = 95.0
+    ) -> pd.DataFrame:
+        """
+        Get extreme values (above percentile threshold) for specific parameter+group
+
+        Args:
+            parameter: Parameter name (e.g., 'Turbidity')
+            group: Group name (FW, TW)
+            percentile_threshold: Percentile threshold (default 95.0)
+
+        Returns:
+            DataFrame with columns [date, time_period, value, percentile_type]
+            - date: Date of measurement
+            - time_period: Time period (00.00-08.00, 08.00-16.00, 16.00-24.00)
+            - value: Actual measured value
+            - percentile_type: '95th' or '100th'
+        """
+        if self.df.empty:
+            return pd.DataFrame(columns=['date', 'time_period', 'value', 'percentile_type'])
+
+        # Get appropriate sampling points for this parameter+group
+        sampling_points = self.get_sampling_points_for_parameter(parameter, group)
+
+        # Filter data
+        filtered = self.df[
+            (self.df['parameter'] == parameter) &
+            (self.df['sampling_point'].isin(sampling_points)) &
+            (self.df['value'].notna())
+        ].copy()
+
+        if filtered.empty:
+            return pd.DataFrame(columns=['date', 'time_period', 'value', 'percentile_type'])
+
+        # Calculate percentile thresholds
+        p95_threshold = filtered['value'].quantile(95.0 / 100.0)
+        p100_value = filtered['value'].max()
+
+        # Get 95th percentile values (values >= p95 but < p100)
+        p95_values = filtered[
+            (filtered['value'] >= p95_threshold) &
+            (filtered['value'] < p100_value)
+        ][['date', 'time_period', 'value']].copy()
+        p95_values['percentile_type'] = '95th'
+
+        # Get 100th percentile (maximum value)
+        p100_rows = filtered[filtered['value'] == p100_value][['date', 'time_period', 'value']].copy()
+        if not p100_rows.empty:
+            p100_rows['percentile_type'] = '100th'
+        else:
+            p100_rows = pd.DataFrame(columns=['date', 'time_period', 'value', 'percentile_type'])
+
+        # Combine
+        extreme_values = pd.concat([p100_rows, p95_values], ignore_index=True)
+
+        # Sort by value descending
+        extreme_values = extreme_values.sort_values('value', ascending=False)
+
+        return extreme_values
+
+    def get_extreme_values_rw_filtered(
+        self,
+        parameter: str,
+        group: str,
+        percentile_threshold: float = 95.0,
+        rw_threshold: float = 100.0
+    ) -> pd.DataFrame:
+        """
+        Get extreme values with @RW<100 filtering applied
+
+        Args:
+            parameter: Parameter name (e.g., 'Turbidity')
+            group: Group name (FW, TW)
+            percentile_threshold: Percentile threshold (default 95.0)
+            rw_threshold: RW turbidity threshold for filtering (default 100.0)
+
+        Returns:
+            DataFrame with columns [date, time_period, value, percentile_type]
+            - date: Date of measurement
+            - time_period: Time period (00.00-08.00, 08.00-16.00, 16.00-24.00)
+            - value: Actual measured value
+            - percentile_type: '95th' or '100th'
+        """
+        if self.df.empty:
+            return pd.DataFrame(columns=['date', 'time_period', 'value', 'percentile_type'])
+
+        # Get appropriate sampling points for this parameter+group
+        sampling_points = self.get_sampling_points_for_parameter(parameter, group)
+
+        # Apply @RW<100 filtering first
+        df_filtered = self.apply_rw_filtering()
+
+        # Filter data
+        filtered = df_filtered[
+            (df_filtered['parameter'] == parameter) &
+            (df_filtered['sampling_point'].isin(sampling_points)) &
+            (df_filtered['value'].notna())
+        ].copy()
+
+        if filtered.empty:
+            return pd.DataFrame(columns=['date', 'time_period', 'value', 'percentile_type'])
+
+        # Calculate percentile thresholds
+        p95_threshold = filtered['value'].quantile(95.0 / 100.0)
+        p100_value = filtered['value'].max()
+
+        # Get 95th percentile values (values >= p95 but < p100)
+        p95_values = filtered[
+            (filtered['value'] >= p95_threshold) &
+            (filtered['value'] < p100_value)
+        ][['date', 'time_period', 'value']].copy()
+        p95_values['percentile_type'] = '95th'
+
+        # Get 100th percentile (maximum value)
+        p100_rows = filtered[filtered['value'] == p100_value][['date', 'time_period', 'value']].copy()
+        if not p100_rows.empty:
+            p100_rows['percentile_type'] = '100th'
+        else:
+            p100_rows = pd.DataFrame(columns=['date', 'time_period', 'value', 'percentile_type'])
+
+        # Combine
+        extreme_values = pd.concat([p100_rows, p95_values], ignore_index=True)
+
+        # Sort by value descending
+        extreme_values = extreme_values.sort_values('value', ascending=False)
+
+        return extreme_values
 
 
 class JarTestProcessor:

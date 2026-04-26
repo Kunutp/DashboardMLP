@@ -298,6 +298,7 @@ def main():
                 st.dataframe(sample_counts_copy, use_container_width=True)
 
             with tab2:
+                st.markdown("### ตารางสรุปจำนวนตัวอย่างที่วิเคราะห์")
                 st.markdown("👆 **คลิกที่แถวในตารางด้านล่าง** เพื่อดูกราฟจำนวนครั้งตรวจวัดรายวัน")
 
                 # Display interactive table with row selection
@@ -376,6 +377,50 @@ def main():
             else:
                 st.info("ไม่มีข้อมูลน้ำนำกลับในช่วงเวลาที่เลือก")
 
+            # Recycle Water Daily Counts (Interactive)
+            if recycle_stats:
+                st.markdown("---")
+                st.markdown("### กราฟจำนวนครั้งตรวจวัดรายวันของน้ำนำกลับ")
+                st.markdown("👆 **คลิกที่แถวในตารางด้านล่าง** เพื่อดูกราฟจำนวนครั้งตรวจวัดรายวัน")
+
+                # Prepare data for recycle water table
+                recycle_data = []
+                for param_name, param_thai_name in [('Turbidity', 'ความขุ่นน้ำนำกลับ'), ('Conductivity', 'ความนำไฟฟ้าน้ำนำกลับ')]:
+                    if param_name in recycle_stats:
+                        recycle_data.append({
+                            'พารามิเตอร์': param_thai_name,
+                            'จำนวนตัวอย่าง': recycle_stats[param_name]['count'],
+                            'param_internal': param_name,
+                            'group_internal': 'recycle_water'
+                        })
+
+                if recycle_data:
+                    recycle_df = pd.DataFrame(recycle_data)
+
+                    # Display recycle water table with selection
+                    recycle_selection = st.dataframe(
+                        recycle_df,
+                        column_config={
+                            'พารามิเตอร์': st.column_config.TextColumn('พารามิเตอร์'),
+                            'จำนวนตัวอย่าง': st.column_config.NumberColumn('จำนวนตัวอย่าง')
+                        },
+                        on_select="rerun",
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                    # Handle recycle water selection
+                    if recycle_selection.selection['rows']:
+                        # Get first selected row
+                        selected_idx = recycle_selection.selection['rows'][0]
+                        selected_row = recycle_df.iloc[selected_idx]
+
+                        # Store in session state (override with recycle water selection)
+                        st.session_state.selected_param_internal = selected_row['param_internal']
+                        st.session_state.selected_group_internal = 'recycle_water'
+                        st.session_state.selected_param_thai = selected_row['พารามิเตอร์']
+                        st.session_state.selected_group_thai = 'น้ำนำกลับ'
+
         # Performance Evaluation Table
         if not water_quality_df.empty:
             st.subheader("สรุปเกณฑ์ประเมินผลงาน")
@@ -452,6 +497,59 @@ def main():
 
             perf_df = pd.DataFrame(perf_data)
             st.dataframe(perf_df, use_container_width=True, hide_index=True)
+
+        # Extreme Values Analysis (Outlier Detection)
+        if not water_quality_df.empty:
+            st.markdown("---")
+            st.subheader("ตรวจสอบความถูกต้อง: ค่าความขุ่นที่สูงผิดปกติ")
+            st.markdown("แสดงค่าความขุ่นที่อยู่เหนือ 95th percentile และค่าสูงสุด (100th percentile) ของน้ำหลังกรองและน้ำประปา")
+
+            # Get extreme values for FW and TW (normal case)
+            fw_extremes = processor.get_extreme_values('Turbidity', 'FW', percentile_threshold=95.0)
+            tw_extremes = processor.get_extreme_values('Turbidity', 'TW', percentile_threshold=95.0)
+
+            # Get extreme values for FW and TW (@RW<100 case)
+            fw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'FW', percentile_threshold=95.0, rw_threshold=rw_threshold)
+            tw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'TW', percentile_threshold=95.0, rw_threshold=rw_threshold)
+
+            # Combine all
+            all_extremes_list = []
+
+            for extremes, group_name, is_rw_filtered in [
+                (fw_extremes, 'น้ำกรอง (FW)', False),
+                (tw_extremes, 'น้ำประปา (TW)', False),
+                (fw_extremes_rw, 'น้ำกรอง (FW)', True),
+                (tw_extremes_rw, 'น้ำประปา (TW)', True)
+            ]:
+                if not extremes.empty:
+                    extremes = extremes.copy()
+                    extremes['กลุ่ม'] = group_name
+                    extremes['@RW<100'] = 'ใช่' if is_rw_filtered else 'ไม่ใช่'
+                    all_extremes_list.append(extremes)
+
+            if all_extremes_list:
+                # Combine
+                all_extremes = pd.concat(all_extremes_list, ignore_index=True)
+
+                # Sort by value descending
+                all_extremes = all_extremes.sort_values('value', ascending=False)
+
+                # Reorder columns
+                all_extremes = all_extremes[['date', 'time_period', 'กลุ่ม', 'value', 'percentile_type', '@RW<100']]
+
+                # Rename columns to Thai
+                all_extremes.columns = ['วันที่', 'ช่วงเวลา', 'กลุ่ม', 'ความขุ่น (NTU)', 'ประเภท', 'สถานะ @RW<100']
+
+                # Translate percentile_type to Thai
+                percentile_thai = {
+                    '95th': '95th percentile',
+                    '100th': '100th percentile'
+                }
+                all_extremes['ประเภท'] = all_extremes['ประเภท'].map(percentile_thai)
+
+                st.dataframe(all_extremes, use_container_width=True, hide_index=True)
+            else:
+                st.info("ไม่พบค่าความขุ่นที่สูงผิดปกติในช่วงเวลาที่เลือก")
 
 
 if __name__ == "__main__":
