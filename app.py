@@ -19,7 +19,7 @@ from src.data_processor import WaterQualityProcessor, JarTestProcessor
 
 @st.dialog("📊 กราฟจำนวนครั้งตรวจวัดรายวัน")
 def show_daily_count_chart(
-    processor: WaterQualityProcessor,
+    water_quality_df: pd.DataFrame,
     parameter: str,
     group: str,
     year: int,
@@ -31,7 +31,7 @@ def show_daily_count_chart(
     Show daily count chart in modal dialog
 
     Args:
-        processor: WaterQualityProcessor instance
+        water_quality_df: DataFrame of water quality data
         parameter: Internal parameter name (e.g., 'Turbidity')
         group: Internal group name (e.g., 'TW')
         year: Selected year
@@ -41,34 +41,31 @@ def show_daily_count_chart(
     """
     st.markdown(f"### {param_thai_name} - {group_thai_name}")
 
-    # Get daily counts
-    daily_counts = processor.get_daily_counts_for_parameter_group(
-        parameter, group, year, month
-    )
+    # Get daily counts (cached)
+    daily_counts = calculate_daily_chart_data(water_quality_df, parameter, group, year, month)
 
     if daily_counts.empty:
         st.warning("ไม่มีข้อมูลในช่วงเวลาที่เลือก")
-        return
+    else:
+        # Summary metrics
+        total_count = daily_counts['count'].sum()
+        avg_count = daily_counts['count'].mean()
+        max_day = daily_counts.loc[daily_counts['count'].idxmax(), 'day']
+        max_count = daily_counts['count'].max()
 
-    # Summary metrics
-    total_count = daily_counts['count'].sum()
-    avg_count = daily_counts['count'].mean()
-    max_day = daily_counts.loc[daily_counts['count'].idxmax(), 'day']
-    max_count = daily_counts['count'].max()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("จำนวนครั้งทั้งหมด", f"{total_count} ครั้ง")
+        with col2:
+            st.metric("เฉลี่ยต่อวัน", f"{avg_count:.1f} ครั้ง")
+        with col3:
+            st.metric("วันที่มีการตรวจวัดมากที่สุด", f"วันที่ {max_day}")
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("จำนวนครั้งทั้งหมด", f"{total_count} ครั้ง")
-    with col2:
-        st.metric("เฉลี่ยต่อวัน", f"{avg_count:.1f} ครั้ง")
-    with col3:
-        st.metric("วันที่มีการตรวจวัดมากที่สุด", f"วันที่ {max_day}")
+        st.markdown("---")
 
-    st.markdown("---")
-
-    # Bar chart
-    chart_data = daily_counts.set_index('day')['count']
-    st.bar_chart(chart_data)
+        # Bar chart
+        chart_data = daily_counts.set_index('day')['count']
+        st.bar_chart(chart_data)
 
 
 def get_highest_extreme_info(extremes_df, percentile_type):
@@ -95,6 +92,112 @@ def get_highest_extreme_info(extremes_df, percentile_type):
     highest = filtered.sort_values('value', ascending=False).iloc[0]
 
     return highest['date'], highest['time_period']
+
+
+@st.cache_data(ttl=300)
+def calculate_performance_metrics(water_quality_df, rw_threshold, turbidity_threshold, ph_min, ph_max, cl2_threshold):
+    """
+    คำนวณ performance metrics ทั้งหมดในครั้งเดียวและ cache ผลลัพธ์
+
+    Args:
+        water_quality_df: DataFrame ของข้อมูลคุณภาพน้ำ
+        rw_threshold: RW turbidity threshold
+        turbidity_threshold: Turbidity threshold for NC
+        ph_min: pH minimum threshold
+        ph_max: pH maximum threshold
+        cl2_threshold: Chlorine threshold
+
+    Returns:
+        dict: มี keys: fw_stats, tw_stats, fw_filtered_stats, tw_filtered_stats,
+                       fw_extremes, tw_extremes, fw_extremes_rw, tw_extremes_rw
+    """
+    from src.data_processor import WaterQualityProcessor
+
+    if water_quality_df.empty:
+        return {}
+
+    processor = WaterQualityProcessor(water_quality_df, {'rw_turbidity_threshold': rw_threshold})
+
+    # คำนวณ statistics ทั้งหมดในครั้งเดียว
+    result = {
+        'fw_stats': processor.get_statistics_with_count('FW', 'Turbidity', apply_filter=False),
+        'tw_stats': processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=False),
+        'fw_filtered_stats': processor.get_statistics_with_count('FW', 'Turbidity', apply_filter=True),
+        'tw_filtered_stats': processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=True),
+        'fw_extremes': processor.get_extreme_values('Turbidity', 'FW', percentile_threshold=95.0),
+        'tw_extremes': processor.get_extreme_values('Turbidity', 'TW', percentile_threshold=95.0),
+        'fw_extremes_rw': processor.get_extreme_values_rw_filtered('Turbidity', 'FW', percentile_threshold=95.0, rw_threshold=rw_threshold),
+        'tw_extremes_rw': processor.get_extreme_values_rw_filtered('Turbidity', 'TW', percentile_threshold=95.0, rw_threshold=rw_threshold)
+    }
+
+    return result
+
+
+@st.cache_data(ttl=300)
+def calculate_daily_chart_data(water_quality_df, param_internal, group_internal, year, month):
+    """
+    คำนวณข้อมูลกราฟรายวันและ cache ผลลัพธ์
+
+    Args:
+        water_quality_df: DataFrame ของข้อมูลคุณภาพน้ำ
+        param_internal: Parameter name (internal)
+        group_internal: Group name (internal)
+        year: ปี
+        month: เดือน
+
+    Returns:
+        DataFrame: daily_counts data
+    """
+    from src.data_processor import WaterQualityProcessor
+
+    if water_quality_df.empty:
+        return pd.DataFrame(columns=['day', 'count'])
+
+    processor = WaterQualityProcessor(water_quality_df, {})
+
+    return processor.get_daily_counts_for_parameter_group(
+        param_internal, group_internal, year, month
+    )
+
+
+@st.cache_data(ttl=300)
+def calculate_sample_counts(water_quality_df):
+    """
+    คำนวณ sample counts ทั้งหมดและ cache ผลลัพธ์
+
+    Args:
+        water_quality_df: DataFrame ของข้อมูลคุณภาพน้ำ
+
+    Returns:
+        DataFrame: sample counts table
+    """
+    from src.data_processor import WaterQualityProcessor
+
+    if water_quality_df.empty:
+        return pd.DataFrame()
+
+    processor = WaterQualityProcessor(water_quality_df, {})
+    return processor.count_samples_by_group_and_parameter()
+
+
+@st.cache_data(ttl=300)
+def calculate_recycle_water_stats(water_quality_df):
+    """
+    คำนวณ recycle water statistics และ cache ผลลัพธ์
+
+    Args:
+        water_quality_df: DataFrame ของข้อมูลคุณภาพน้ำ
+
+    Returns:
+        dict: Recycle water statistics
+    """
+    from src.data_processor import WaterQualityProcessor
+
+    if water_quality_df.empty:
+        return {}
+
+    processor = WaterQualityProcessor(water_quality_df, {})
+    return processor.get_recycle_water_stats()
 
 
 def main():
@@ -238,7 +341,7 @@ def main():
         # Table 1: Summary by Group and Parameter
         st.subheader("ตารางที่ 1: จำนวนตัวอย่างที่วิเคราะห์ในแต่ละกลุ่ม")
 
-        sample_counts = processor.count_samples_by_group_and_parameter()
+        sample_counts = calculate_sample_counts(water_quality_df)
 
         # Thai parameter names mapping
         param_thai = {
@@ -350,8 +453,9 @@ def main():
         # Show dialog if selection exists
         if all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
                                                      'selected_param_thai', 'selected_group_thai']):
+            # Auto-open dialog for better UX
             show_daily_count_chart(
-                processor,
+                water_quality_df,
                 st.session_state.selected_param_internal,
                 st.session_state.selected_group_internal,
                 selected_year,
@@ -360,11 +464,7 @@ def main():
                 st.session_state.selected_group_thai
             )
 
-            # Clear session state after showing dialog
-            for key in ['selected_param_internal', 'selected_group_internal',
-                       'selected_param_thai', 'selected_group_thai']:
-                if key in st.session_state:
-                    del st.session_state[key]
+
 
         # Jar Test Chemical Usage
         if not jar_test_df.empty:
@@ -384,7 +484,7 @@ def main():
         if not water_quality_df.empty:
             st.subheader("การวิเคราะห์ตัวอย่างจากระบบกำจัดตะกอน")
 
-            recycle_stats = processor.get_recycle_water_stats()
+            recycle_stats = calculate_recycle_water_stats(water_quality_df)
 
             if recycle_stats:
                 col1, col2 = st.columns(2)
@@ -451,7 +551,24 @@ def main():
         if not water_quality_df.empty:
             st.subheader("สรุปเกณฑ์ประเมินผลงาน")
 
-            # Calculate all required metrics
+            # Calculate all required metrics (cached)
+            metrics = calculate_performance_metrics(
+                water_quality_df, rw_threshold, turbidity_threshold, ph_min, ph_max, cl2_threshold
+            )
+
+            # Get statistics with count
+            fw_stats_with_count = metrics['fw_stats']
+            tw_stats_with_count = metrics['tw_stats']
+            fw_stats_filtered_with_count = metrics['fw_filtered_stats']
+            tw_stats_filtered_with_count = metrics['tw_filtered_stats']
+
+            # Get extreme values data for date/time information
+            fw_extremes = metrics['fw_extremes']
+            tw_extremes = metrics['tw_extremes']
+            fw_extremes_rw = metrics['fw_extremes_rw']
+            tw_extremes_rw = metrics['tw_extremes_rw']
+
+            # Calculate NC samples (not cached - depends on thresholds)
             turb_tw_nc, turb_tw_total = processor.count_nc_samples(
                 'TW', 'Turbidity', lambda x: x > turbidity_threshold
             )
@@ -461,18 +578,6 @@ def main():
             cl2_nc, cl2_total = processor.count_nc_samples(
                 'TW', 'Free Residual Cl2', lambda x: x < cl2_threshold
             )
-
-            # Get statistics with count
-            fw_stats_with_count = processor.get_statistics_with_count('FW', 'Turbidity', apply_filter=False)
-            tw_stats_with_count = processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=False)
-            fw_stats_filtered_with_count = processor.get_statistics_with_count('FW', 'Turbidity', apply_filter=True)
-            tw_stats_filtered_with_count = processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=True)
-
-            # Get extreme values data for date/time information
-            fw_extremes = processor.get_extreme_values('Turbidity', 'FW', percentile_threshold=95.0)
-            tw_extremes = processor.get_extreme_values('Turbidity', 'TW', percentile_threshold=95.0)
-            fw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'FW', percentile_threshold=95.0, rw_threshold=rw_threshold)
-            tw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'TW', percentile_threshold=95.0, rw_threshold=rw_threshold)
 
             # Build date and time arrays for percentile rows
             # Initialize with 14 empty strings (for 14 rows in the table)

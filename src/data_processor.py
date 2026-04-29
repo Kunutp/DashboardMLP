@@ -22,15 +22,22 @@ class WaterQualityProcessor:
         """
         self.df = df.copy()
         self.thresholds = thresholds
+        self._rw_filtered_cache = None  # Cache for apply_rw_filtering() result
 
     def apply_rw_filtering(self) -> pd.DataFrame:
         """
         Apply @RW<100 filtering logic
         Exclude FW/TW data when RW Turbidity > threshold at the same timestamp
 
+        Results are cached to avoid redundant calculations.
+
         Returns:
             Filtered DataFrame
         """
+        # Return cached result if available
+        if self._rw_filtered_cache is not None:
+            return self._rw_filtered_cache
+
         if self.df.empty:
             return self.df
 
@@ -49,21 +56,27 @@ class WaterQualityProcessor:
         ][['date', 'time_period']].drop_duplicates()
 
         if problematic_periods.empty:
+            self._rw_filtered_cache = df_filtered
             return df_filtered
 
-        # Filter out FW and TW data during problematic periods
-        mask = (
-            (~self.df['sampling_point'].isin(config.SAMPLING_GROUPS['FW'] + config.SAMPLING_GROUPS['TW'])) |
-            (~self.df[['date', 'time_period']].apply(
-                lambda row: any(
-                    (row['date'] == period['date']) &
-                    (row['time_period'] == period['time_period'])
-                    for _, period in problematic_periods.iterrows()
-                ), axis=1
-            ))
+        # Filter out FW and TW data during problematic periods (optimized - vectorized)
+        # Create a set of (date, time_period) tuples for fast lookup
+        problematic_set = set(
+            problematic_periods.itertuples(index=False, name=None)
         )
 
-        return df_filtered[mask]
+        # Vectorized operation using list comprehension
+        date_time_tuples = list(zip(self.df['date'], self.df['time_period']))
+        is_problematic = pd.Series([dt in problematic_set for dt in date_time_tuples], index=self.df.index)
+
+        mask = (
+            (~self.df['sampling_point'].isin(config.SAMPLING_GROUPS['FW'] + config.SAMPLING_GROUPS['TW'])) |
+            (~is_problematic)
+        )
+
+        result = df_filtered[mask]
+        self._rw_filtered_cache = result  # Cache the result
+        return result
 
     def get_sampling_point_group(self, sampling_point: str) -> Optional[str]:
         """
