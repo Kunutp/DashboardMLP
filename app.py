@@ -17,55 +17,47 @@ from src.database import (
 from src.data_processor import WaterQualityProcessor, JarTestProcessor
 
 
-@st.dialog("📊 กราฟจำนวนครั้งตรวจวัดรายวัน")
-def show_daily_count_chart(
-    water_quality_df: pd.DataFrame,
-    parameter: str,
-    group: str,
-    year: int,
-    month: int,
-    param_thai_name: str,
-    group_thai_name: str
-):
-    """
-    Show daily count chart in modal dialog
+def show_daily_count_chart(water_quality_df, parameter, group, year, month, param_thai_name, group_thai_name, unique_key):
+    """Show daily count chart in modal dialog"""
+    import time
 
-    Args:
-        water_quality_df: DataFrame of water quality data
-        parameter: Internal parameter name (e.g., 'Turbidity')
-        group: Internal group name (e.g., 'TW')
-        year: Selected year
-        month: Selected month
-        param_thai_name: Thai parameter name for display
-        group_thai_name: Thai group name for display
-    """
-    st.markdown(f"### {param_thai_name} - {group_thai_name}")
+    # Create wrapper function with unique title
+    def dialog_content():
+        st.markdown(f"### {param_thai_name} - {group_thai_name}")
 
-    # Get daily counts (cached)
-    daily_counts = calculate_daily_chart_data(water_quality_df, parameter, group, year, month)
+        # Get daily counts (cached)
+        daily_counts = calculate_daily_chart_data(water_quality_df, parameter, group, year, month)
 
-    if daily_counts.empty:
-        st.warning("ไม่มีข้อมูลในช่วงเวลาที่เลือก")
-    else:
-        # Summary metrics
-        total_count = daily_counts['count'].sum()
-        avg_count = daily_counts['count'].mean()
-        max_day = daily_counts.loc[daily_counts['count'].idxmax(), 'day']
-        max_count = daily_counts['count'].max()
+        if daily_counts.empty:
+            st.warning("ไม่มีข้อมูลในช่วงเวลาที่เลือก")
+        else:
+            # Summary metrics
+            total_count = daily_counts['count'].sum()
+            avg_count = daily_counts['count'].mean()
+            max_day = daily_counts.loc[daily_counts['count'].idxmax(), 'day']
+            max_count = daily_counts['count'].max()
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("จำนวนครั้งทั้งหมด", f"{total_count} ครั้ง")
-        with col2:
-            st.metric("เฉลี่ยต่อวัน", f"{avg_count:.1f} ครั้ง")
-        with col3:
-            st.metric("วันที่มีการตรวจวัดมากที่สุด", f"วันที่ {max_day}")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("จำนวนครั้งทั้งหมด", f"{total_count} ครั้ง")
+            with col2:
+                st.metric("เฉลี่ยต่อวัน", f"{avg_count:.1f} ครั้ง")
+            with col3:
+                st.metric("วันที่มีการตรวจวัดมากที่สุด", f"วันที่ {max_day}")
 
-        st.markdown("---")
+            st.markdown("---")
 
-        # Bar chart
-        chart_data = daily_counts.set_index('day')['count']
-        st.bar_chart(chart_data)
+            # Bar chart
+            chart_data = daily_counts.set_index('day')['count']
+            st.bar_chart(chart_data)
+
+    # Create unique title
+    unique_title = f"📊 กราฟจำนวนครั้งตรวจวัดรายวัน - {unique_key} - {int(time.time() * 1000)}"
+
+    # Create dialog decorator dynamically
+    dialog_decorator = st.dialog(unique_title)
+    decorated_func = dialog_decorator(dialog_content)
+    decorated_func()
 
 
 def get_highest_extreme_info(extremes_df, percentile_type):
@@ -95,17 +87,18 @@ def get_highest_extreme_info(extremes_df, percentile_type):
 
 
 @st.cache_data(ttl=300)
-def calculate_performance_metrics(water_quality_df, rw_threshold, turbidity_threshold, ph_min, ph_max, cl2_threshold):
+def calculate_performance_metrics(water_quality_df, rw_threshold, _turbidity_threshold, _ph_min, _ph_max, _cl2_threshold):
     """
     คำนวณ performance metrics ทั้งหมดในครั้งเดียวและ cache ผลลัพธ์
+    Cache ขึ้นกับ water_quality_df, rw_threshold เท่านั้น (exclude thresholds)
 
     Args:
         water_quality_df: DataFrame ของข้อมูลคุณภาพน้ำ
         rw_threshold: RW turbidity threshold
-        turbidity_threshold: Turbidity threshold for NC
-        ph_min: pH minimum threshold
-        ph_max: pH maximum threshold
-        cl2_threshold: Chlorine threshold
+        _turbidity_threshold: Turbidity threshold for NC (ไม่ใช้ใน cache key)
+        _ph_min: pH minimum threshold (ไม่ใช้ใน cache key)
+        _ph_max: pH maximum threshold (ไม่ใช้ใน cache key)
+        _cl2_threshold: Chlorine threshold (ไม่ใช้ใน cache key)
 
     Returns:
         dict: มี keys: fw_stats, tw_stats, fw_filtered_stats, tw_filtered_stats,
@@ -449,20 +442,48 @@ def main():
                     st.session_state.selected_group_internal = selected_row['group_internal']
                     st.session_state.selected_param_thai = selected_row['พารามิเตอร์']
                     st.session_state.selected_group_thai = selected_row['กลุ่ม']
+                    st.session_state.dialog_source = 'sample_counts'  # Track source
+                    # Mark that this is a NEW selection (user just clicked)
+                    st.session_state.new_selection = True
+                else:
+                    # No selection - clear all dialog-related flags
+                    for key in ['selected_param_internal', 'selected_group_internal',
+                               'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                        if key in st.session_state:
+                            del st.session_state[key]
 
-        # Show dialog if selection exists
-        if all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
-                                                     'selected_param_thai', 'selected_group_thai']):
-            # Auto-open dialog for better UX
-            show_daily_count_chart(
-                water_quality_df,
-                st.session_state.selected_param_internal,
-                st.session_state.selected_group_internal,
-                selected_year,
-                selected_month,
-                st.session_state.selected_param_thai,
-                st.session_state.selected_group_thai
-            )
+                # Show dialog if selection exists AND it's from sample counts (tab2) AND user just clicked
+                if (all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
+                                                              'selected_param_thai', 'selected_group_thai']) and
+                    st.session_state.get('dialog_source') == 'sample_counts' and
+                    st.session_state.get('new_selection', False)):  # Only show if NEW selection
+
+                    # Clear new_selection flag after showing dialog once
+                    if 'new_selection' in st.session_state:
+                        del st.session_state['new_selection']
+
+                    # Show dialog
+                    show_daily_count_chart(
+                        water_quality_df,
+                        st.session_state.selected_param_internal,
+                        st.session_state.selected_group_internal,
+                        selected_year,
+                        selected_month,
+                        st.session_state.selected_param_thai,
+                        st.session_state.selected_group_thai,
+                        'sample_counts'  # unique key for tab2
+                    )
+                # If selection exists but NO new_selection flag, it means dialog was just closed
+                # Clear the selection to uncheck the box
+                elif (all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
+                                                                 'selected_param_thai', 'selected_group_thai']) and
+                      st.session_state.get('dialog_source') == 'sample_counts'):
+                    # Clear selection state
+                    for key in ['selected_param_internal', 'selected_group_internal',
+                               'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.rerun()
 
 
 
@@ -546,6 +567,48 @@ def main():
                         st.session_state.selected_group_internal = 'recycle_water'
                         st.session_state.selected_param_thai = selected_row['พารามิเตอร์']
                         st.session_state.selected_group_thai = 'น้ำนำกลับ'
+                        st.session_state.dialog_source = 'recycle_water'  # Track source
+                        # Mark that this is a NEW selection (user just clicked)
+                        st.session_state.new_selection = True
+                    else:
+                        # No selection - clear all dialog-related flags
+                        for key in ['selected_param_internal', 'selected_group_internal',
+                                   'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                            if key in st.session_state:
+                                del st.session_state[key]
+
+                # Show dialog if selection exists AND it's from recycle water AND user just clicked
+                if (all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
+                                                              'selected_param_thai', 'selected_group_thai']) and
+                    st.session_state.get('dialog_source') == 'recycle_water' and
+                    st.session_state.get('new_selection', False)):  # Only show if NEW selection
+
+                    # Clear new_selection flag after showing dialog once
+                    if 'new_selection' in st.session_state:
+                        del st.session_state['new_selection']
+
+                    # Show dialog
+                    show_daily_count_chart(
+                        water_quality_df,
+                        st.session_state.selected_param_internal,
+                        st.session_state.selected_group_internal,
+                        selected_year,
+                        selected_month,
+                        st.session_state.selected_param_thai,
+                        st.session_state.selected_group_thai,
+                        'recycle_water'  # unique key for recycle water
+                    )
+                # If selection exists but NO new_selection flag, it means dialog was just closed
+                # Clear the selection to uncheck the box
+                elif (all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
+                                                                 'selected_param_thai', 'selected_group_thai']) and
+                      st.session_state.get('dialog_source') == 'recycle_water'):
+                    # Clear selection state
+                    for key in ['selected_param_internal', 'selected_group_internal',
+                               'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.rerun()
 
         # Performance Evaluation Table
         if not water_quality_df.empty:
