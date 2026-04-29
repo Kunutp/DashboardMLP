@@ -71,6 +71,32 @@ def show_daily_count_chart(
     st.bar_chart(chart_data)
 
 
+def get_highest_extreme_info(extremes_df, percentile_type):
+    """
+    ดึงวันที่และช่วงเวลาของ extreme value ที่มีค่าสูงสุด
+
+    Args:
+        extremes_df: DataFrame จาก get_extreme_values() หรือ get_extreme_values_rw_filtered()
+        percentile_type: '95th' หรือ '100th'
+
+    Returns:
+        tuple: (date_str, time_period_str) หรือ ("", "") ถ้าไม่พบข้อมูล
+    """
+    if extremes_df.empty:
+        return "", ""
+
+    # กรองเฉพาะ percentile ที่ต้องการ
+    filtered = extremes_df[extremes_df['percentile_type'] == percentile_type]
+
+    if filtered.empty:
+        return "", ""
+
+    # เรียงลำดับตามค่า value จากมากไปน้อย แล้วเอาแถวแรกสุด (ค่าสูงสุด)
+    highest = filtered.sort_values('value', ascending=False).iloc[0]
+
+    return highest['date'], highest['time_period']
+
+
 def main():
     # Page Configuration
     st.set_page_config(
@@ -295,7 +321,7 @@ def main():
             tab1, tab2 = st.tabs(["📊 ตารางสรุป (Pivot)", "📈 ดูกราฟรายวัน"])
 
             with tab1:
-                st.dataframe(sample_counts_copy, use_container_width=True)
+                st.dataframe(sample_counts_copy, width="stretch")
 
             with tab2:
                 st.markdown("### ตารางสรุปจำนวนตัวอย่างที่วิเคราะห์")
@@ -305,7 +331,7 @@ def main():
                 selection = st.dataframe(
                     long_format[['พารามิเตอร์', 'กลุ่ม', 'จำนวน']],
                     on_select="rerun",
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True
                 )
 
@@ -405,7 +431,7 @@ def main():
                             'จำนวนตัวอย่าง': st.column_config.NumberColumn('จำนวนตัวอย่าง')
                         },
                         on_select="rerun",
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -441,6 +467,53 @@ def main():
             tw_stats_with_count = processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=False)
             fw_stats_filtered_with_count = processor.get_statistics_with_count('FW', 'Turbidity', apply_filter=True)
             tw_stats_filtered_with_count = processor.get_statistics_with_count('TW', 'Turbidity', apply_filter=True)
+
+            # Get extreme values data for date/time information
+            fw_extremes = processor.get_extreme_values('Turbidity', 'FW', percentile_threshold=95.0)
+            tw_extremes = processor.get_extreme_values('Turbidity', 'TW', percentile_threshold=95.0)
+            fw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'FW', percentile_threshold=95.0, rw_threshold=rw_threshold)
+            tw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'TW', percentile_threshold=95.0, rw_threshold=rw_threshold)
+
+            # Build date and time arrays for percentile rows
+            # Initialize with 14 empty strings (for 14 rows in the table)
+            date_array = [""] * 14
+            time_array = [""] * 14
+
+            # Map extreme values to correct rows
+            # Row 4: FW 95th (normal)
+            date_val, time_val = get_highest_extreme_info(fw_extremes, '95th')
+            date_array[4] = date_val if date_val else "-"
+            time_array[4] = time_val if time_val else "-"
+
+            # Row 6: TW 95th (normal)
+            date_val, time_val = get_highest_extreme_info(tw_extremes, '95th')
+            date_array[6] = date_val if date_val else "-"
+            time_array[6] = time_val if time_val else "-"
+
+            # Row 7: TW 100th (normal)
+            date_val, time_val = get_highest_extreme_info(tw_extremes, '100th')
+            date_array[7] = date_val if date_val else "-"
+            time_array[7] = time_val if time_val else "-"
+
+            # Row 9: FW 95th (filtered)
+            date_val, time_val = get_highest_extreme_info(fw_extremes_rw, '95th')
+            date_array[9] = date_val if date_val else "-"
+            time_array[9] = time_val if time_val else "-"
+
+            # Row 10: FW 100th (filtered)
+            date_val, time_val = get_highest_extreme_info(fw_extremes_rw, '100th')
+            date_array[10] = date_val if date_val else "-"
+            time_array[10] = time_val if time_val else "-"
+
+            # Row 12: TW 95th (filtered)
+            date_val, time_val = get_highest_extreme_info(tw_extremes_rw, '95th')
+            date_array[12] = date_val if date_val else "-"
+            time_array[12] = time_val if time_val else "-"
+
+            # Row 13: TW 100th (filtered)
+            date_val, time_val = get_highest_extreme_info(tw_extremes_rw, '100th')
+            date_array[13] = date_val if date_val else "-"
+            time_array[13] = time_val if time_val else "-"
 
             # Build performance table data
             perf_data = {
@@ -492,64 +565,13 @@ def main():
                     f"{tw_stats_filtered_with_count['mean']:.2f}" if not np.isnan(tw_stats_filtered_with_count['mean']) else "N/A",
                     f"{tw_stats_filtered_with_count['p95']:.2f}" if not np.isnan(tw_stats_filtered_with_count['p95']) else "N/A",
                     f"{tw_stats_filtered_with_count['p100']:.2f}" if not np.isnan(tw_stats_filtered_with_count['p100']) else "N/A"
-                ]
+                ],
+                'วันที่ (95th/100th)': date_array,
+                'ช่วงเวลา (95th/100th)': time_array
             }
 
             perf_df = pd.DataFrame(perf_data)
-            st.dataframe(perf_df, use_container_width=True, hide_index=True)
-
-        # Extreme Values Analysis (Outlier Detection)
-        if not water_quality_df.empty:
-            st.markdown("---")
-            st.subheader("ตรวจสอบความถูกต้อง: ค่าความขุ่นที่สูงผิดปกติ")
-            st.markdown("แสดงค่าความขุ่นที่อยู่เหนือ 95th percentile และค่าสูงสุด (100th percentile) ของน้ำหลังกรองและน้ำประปา")
-
-            # Get extreme values for FW and TW (normal case)
-            fw_extremes = processor.get_extreme_values('Turbidity', 'FW', percentile_threshold=95.0)
-            tw_extremes = processor.get_extreme_values('Turbidity', 'TW', percentile_threshold=95.0)
-
-            # Get extreme values for FW and TW (@RW<100 case)
-            fw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'FW', percentile_threshold=95.0, rw_threshold=rw_threshold)
-            tw_extremes_rw = processor.get_extreme_values_rw_filtered('Turbidity', 'TW', percentile_threshold=95.0, rw_threshold=rw_threshold)
-
-            # Combine all
-            all_extremes_list = []
-
-            for extremes, group_name, is_rw_filtered in [
-                (fw_extremes, 'น้ำกรอง (FW)', False),
-                (tw_extremes, 'น้ำประปา (TW)', False),
-                (fw_extremes_rw, 'น้ำกรอง (FW)', True),
-                (tw_extremes_rw, 'น้ำประปา (TW)', True)
-            ]:
-                if not extremes.empty:
-                    extremes = extremes.copy()
-                    extremes['กลุ่ม'] = group_name
-                    extremes['@RW<100'] = 'ใช่' if is_rw_filtered else 'ไม่ใช่'
-                    all_extremes_list.append(extremes)
-
-            if all_extremes_list:
-                # Combine
-                all_extremes = pd.concat(all_extremes_list, ignore_index=True)
-
-                # Sort by value descending
-                all_extremes = all_extremes.sort_values('value', ascending=False)
-
-                # Reorder columns
-                all_extremes = all_extremes[['date', 'time_period', 'กลุ่ม', 'value', 'percentile_type', '@RW<100']]
-
-                # Rename columns to Thai
-                all_extremes.columns = ['วันที่', 'ช่วงเวลา', 'กลุ่ม', 'ความขุ่น (NTU)', 'ประเภท', 'สถานะ @RW<100']
-
-                # Translate percentile_type to Thai
-                percentile_thai = {
-                    '95th': '95th percentile',
-                    '100th': '100th percentile'
-                }
-                all_extremes['ประเภท'] = all_extremes['ประเภท'].map(percentile_thai)
-
-                st.dataframe(all_extremes, use_container_width=True, hide_index=True)
-            else:
-                st.info("ไม่พบค่าความขุ่นที่สูงผิดปกติในช่วงเวลาที่เลือก")
+            st.dataframe(perf_df, width="stretch", hide_index=True)
 
 
 if __name__ == "__main__":
