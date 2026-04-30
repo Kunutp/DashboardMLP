@@ -437,18 +437,29 @@ def main():
                     selected_idx = selection.selection['rows'][0]
                     selected_row = long_format.iloc[selected_idx]
 
+                    # Check if this is a DIFFERENT selection from what's already stored
+                    current_selection_key = f"{selected_row['param_internal']}_{selected_row['group_internal']}"
+                    previous_key = st.session_state.get('previous_selection_key', '')
+
+                    # Only mark as new selection if it's different from previous
+                    is_new_selection = (current_selection_key != previous_key)
+
                     # Store in session state
                     st.session_state.selected_param_internal = selected_row['param_internal']
                     st.session_state.selected_group_internal = selected_row['group_internal']
                     st.session_state.selected_param_thai = selected_row['พารามิเตอร์']
                     st.session_state.selected_group_thai = selected_row['กลุ่ม']
                     st.session_state.dialog_source = 'sample_counts'  # Track source
-                    # Mark that this is a NEW selection (user just clicked)
-                    st.session_state.new_selection = True
+                    st.session_state.previous_selection_key = current_selection_key
+
+                    # Mark that this is a NEW selection (user just clicked) ONLY if different
+                    if is_new_selection:
+                        st.session_state.new_selection = True
                 else:
                     # No selection - clear all dialog-related flags
                     for key in ['selected_param_internal', 'selected_group_internal',
-                               'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                               'selected_param_thai', 'selected_group_thai', 'dialog_source',
+                               'previous_selection_key']:
                         if key in st.session_state:
                             del st.session_state[key]
 
@@ -462,6 +473,9 @@ def main():
                     if 'new_selection' in st.session_state:
                         del st.session_state['new_selection']
 
+                    # Mark that dialog is now open
+                    st.session_state.dialog_open = True
+
                     # Show dialog
                     show_daily_count_chart(
                         water_quality_df,
@@ -473,14 +487,16 @@ def main():
                         st.session_state.selected_group_thai,
                         'sample_counts'  # unique key for tab2
                     )
-                # If selection exists but NO new_selection flag, it means dialog was just closed
-                # Clear the selection to uncheck the box
+                # If selection exists, dialog was open (dialog_open=True), but no new_selection
+                # This means user just closed the dialog - clear selection
                 elif (all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
                                                                  'selected_param_thai', 'selected_group_thai']) and
-                      st.session_state.get('dialog_source') == 'sample_counts'):
-                    # Clear selection state
+                      st.session_state.get('dialog_source') == 'sample_counts' and
+                      st.session_state.get('dialog_open', False)):
+                    # Dialog was just closed - clear selection and dialog_open flag
                     for key in ['selected_param_internal', 'selected_group_internal',
-                               'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                               'selected_param_thai', 'selected_group_thai', 'dialog_source',
+                               'previous_selection_key', 'dialog_open']:
                         if key in st.session_state:
                             del st.session_state[key]
                     st.rerun()
@@ -562,18 +578,29 @@ def main():
                         selected_idx = recycle_selection.selection['rows'][0]
                         selected_row = recycle_df.iloc[selected_idx]
 
+                        # Check if this is a DIFFERENT selection from what's already stored
+                        current_selection_key = f"{selected_row['param_internal']}_recycle_water"
+                        previous_key = st.session_state.get('previous_selection_key', '')
+
+                        # Only mark as new selection if it's different from previous
+                        is_new_selection = (current_selection_key != previous_key)
+
                         # Store in session state (override with recycle water selection)
                         st.session_state.selected_param_internal = selected_row['param_internal']
                         st.session_state.selected_group_internal = 'recycle_water'
                         st.session_state.selected_param_thai = selected_row['พารามิเตอร์']
                         st.session_state.selected_group_thai = 'น้ำนำกลับ'
                         st.session_state.dialog_source = 'recycle_water'  # Track source
-                        # Mark that this is a NEW selection (user just clicked)
-                        st.session_state.new_selection = True
+                        st.session_state.previous_selection_key = current_selection_key
+
+                        # Mark that this is a NEW selection (user just clicked) ONLY if different
+                        if is_new_selection:
+                            st.session_state.new_selection = True
                     else:
                         # No selection - clear all dialog-related flags
                         for key in ['selected_param_internal', 'selected_group_internal',
-                                   'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                                   'selected_param_thai', 'selected_group_thai', 'dialog_source',
+                                   'previous_selection_key']:
                             if key in st.session_state:
                                 del st.session_state[key]
 
@@ -587,6 +614,9 @@ def main():
                     if 'new_selection' in st.session_state:
                         del st.session_state['new_selection']
 
+                    # Mark that dialog is now open
+                    st.session_state.dialog_open = True
+
                     # Show dialog
                     show_daily_count_chart(
                         water_quality_df,
@@ -598,14 +628,16 @@ def main():
                         st.session_state.selected_group_thai,
                         'recycle_water'  # unique key for recycle water
                     )
-                # If selection exists but NO new_selection flag, it means dialog was just closed
-                # Clear the selection to uncheck the box
+                # If selection exists, dialog was open (dialog_open=True), but no new_selection
+                # This means user just closed the dialog - clear selection
                 elif (all(key in st.session_state for key in ['selected_param_internal', 'selected_group_internal',
                                                                  'selected_param_thai', 'selected_group_thai']) and
-                      st.session_state.get('dialog_source') == 'recycle_water'):
-                    # Clear selection state
+                      st.session_state.get('dialog_source') == 'recycle_water' and
+                      st.session_state.get('dialog_open', False)):
+                    # Dialog was just closed - clear selection and dialog_open flag
                     for key in ['selected_param_internal', 'selected_group_internal',
-                               'selected_param_thai', 'selected_group_thai', 'dialog_source']:
+                               'selected_param_thai', 'selected_group_thai', 'dialog_source',
+                               'previous_selection_key', 'dialog_open']:
                         if key in st.session_state:
                             del st.session_state[key]
                     st.rerun()
